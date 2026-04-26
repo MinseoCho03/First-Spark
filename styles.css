@@ -947,6 +947,30 @@ textarea {
   margin-top: 5px;
 }
 
+.field.green {
+  border-color: #bce5d9;
+  background: var(--green-soft);
+}
+.field.green strong { color: var(--green); }
+
+.field.blue {
+  border-color: #bfd5ff;
+  background: var(--blue-soft);
+}
+.field.blue strong { color: var(--blue-dark); }
+
+.field.amber {
+  border-color: #f4dc9c;
+  background: var(--amber-soft);
+}
+.field.amber strong { color: var(--amber); }
+
+.field.red {
+  border-color: #f2c3bd;
+  background: var(--red-soft);
+}
+.field.red strong { color: var(--red); }
+
 .split-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -1005,7 +1005,6 @@ function renderDiscovery() {
 }
 
 function queueProjectCard(project) {
-  const status = getReviewStatus(project);
   return `<article class="queue-card">
     <div>
       <h3>${escapeHtml(project.title)}</h3>
@@ -1016,7 +1015,6 @@ function queueProjectCard(project) {
       <span class="badge blue">Readiness: ${escapeHtml(project.readiness)}</span>
       <span class="badge ${gapClass(project.opportunityGap)}">Opportunity Gap: ${escapeHtml(project.opportunityGap)}</span>
       <span class="badge green">Verification: ${escapeHtml(project.verification)}</span>
-      <span class="badge ${reviewStatusClass(status)}">${escapeHtml(status)}</span>
     </div>
     <button class="btn primary packet-btn" data-project-id="${escapeHtml(project.id)}">View</button>
   </article>`;
@@ -1467,17 +1465,14 @@ function renderDetail() {
   const readiness = project.readiness || computeReadiness(project);
   const readinessReasons = readinessRationale(project);
   const gapReasons = project.gapRationale || gapRationale(project, intel);
+  const stageClass = project.stage === "Pilot-ready" ? "green" : project.stage === "Idea" ? "amber" : "blue";
   $("#detail").innerHTML = `
     ${pageHeader(
       "detail-title",
       project.title,
       `${project.country} · ${project.sector} · ${project.stage}`,
       "",
-      `<span class="badge green">Verification: ${escapeHtml(project.verification)}</span>
-       <span class="badge blue">Readiness: ${escapeHtml(readiness)}</span>
-       <span class="badge ${gapClass(gapLabel)}">Opportunity Gap: ${escapeHtml(gapLabel)}</span>
-       <span class="badge ${reviewStatusClass(reviewStatus)}">Current Review Status: ${escapeHtml(reviewStatus)}</span>
-       <button class="btn review-action" data-action="shortlist">Shortlist</button>
+      `<button class="btn review-action" data-action="shortlist">Shortlist</button>
        <button class="btn review-action" data-action="evidence">Request Evidence</button>
        <button class="btn review-action" data-action="invite">Invite to Apply</button>
        <button class="btn contact-builder-btn" data-project-id="${escapeHtml(project.id)}">Contact Builder</button>
@@ -1507,10 +1502,10 @@ function renderDetail() {
           ${renderProfileField("Sector", project.sector)}
           ${renderProfileField("Subsector", project.subsector)}
           ${renderProfileField("Beneficiaries", project.beneficiaries)}
-          ${renderProfileField("Stage", project.stage)}
-          ${renderProfileField("Funding Need", `${project.fundingNeed} pilot grant`)}
-          ${renderProfileField("Verification", project.verification)}
-          ${renderProfileField("Current Review Status", reviewStatus)}
+          <div class="field ${stageClass}"><span>Stage</span><strong>${escapeHtml(project.stage)}</strong></div>
+          <div class="field blue"><span>Funding Need</span><strong>${escapeHtml(project.fundingNeed)} pilot grant</strong></div>
+          <div class="field green"><span>Verification</span><strong>${escapeHtml(project.verification)}</strong></div>
+          <div class="field ${reviewStatusClass(reviewStatus)}"><span>Current Review Status</span><strong>${escapeHtml(reviewStatus)}</strong></div>
           ${project.pilotPartner ? renderProfileField("Pilot / Local Partner", project.pilotPartner) : ""}
           ${project.usersReached ? renderProfileField("Current Users / Beneficiaries", project.usersReached) : ""}
           ${project.budgetBreakdown ? renderProfileField("Budget Breakdown", project.budgetBreakdown) : ""}

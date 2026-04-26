@@ -2243,16 +2243,6 @@ function goTo(page) {
 }
 
 document.addEventListener("click", (event) => {
-  if (event.target.closest("#reset-demo-data")) {
-    localStorage.removeItem(STORAGE_KEYS.submittedProjects);
-    localStorage.removeItem(STORAGE_KEYS.reviewStatuses);
-    localStorage.removeItem(STORAGE_KEYS.builderActivity);
-    localStorage.removeItem(STORAGE_KEYS.messages);
-    localStorage.removeItem(STORAGE_KEYS.recordedAmounts);
-    window.location.reload();
-    return;
-  }
-
   const nav = event.target.closest(".nav-link");
   if (nav) {
     goTo(nav.dataset.page);

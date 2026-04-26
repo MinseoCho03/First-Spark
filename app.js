@@ -103,6 +103,38 @@ const manualRegion = [
   { label: "Latin America", count: 5 },
 ];
 
+const STORAGE_KEYS = {
+  submittedProjects: "opportunityAtlas.submittedProjects.v1",
+  reviewStatuses: "opportunityAtlas.reviewStatuses.v1",
+};
+
+const STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "based",
+  "by",
+  "for",
+  "from",
+  "in",
+  "into",
+  "is",
+  "of",
+  "on",
+  "or",
+  "project",
+  "program",
+  "programme",
+  "support",
+  "the",
+  "this",
+  "to",
+  "with",
+]);
+
 const state = {
   page: window.__INITIAL_PAGE__ || "overview",
   selectedProjectId: "offline-learning-ghana",
@@ -175,8 +207,257 @@ function readinessFilterFor(label) {
   return "Pilot-oriented";
 }
 
+function deriveReadinessFromStage(stage) {
+  if (stage === "Pilot-ready" || stage === "Active users") return "Pilot-ready";
+  if (stage === "Prototype") return "Pilot-oriented prototype";
+  return "Early-stage";
+}
+
 function getReviewStatus(project) {
   return project.reviewStatus || "Not reviewed";
+}
+
+function storageGet(key, fallback) {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function storageSet(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Demo persistence should never block the UI if storage is unavailable.
+  }
+}
+
+function normalizeProject(project) {
+  return {
+    readiness: deriveReadinessFromStage(project.stage),
+    readinessFilter: readinessFilterFor(project.readiness || deriveReadinessFromStage(project.stage)),
+    opportunityGap: project.opportunityGap || "Medium",
+    verification: "Self-reported",
+    reviewStatus: "Not reviewed",
+    ...project,
+  };
+}
+
+function initializeStoredData() {
+  const submitted = storageGet(STORAGE_KEYS.submittedProjects, []);
+  submitted.map(normalizeProject).forEach((project) => {
+    if (!projects.some((existing) => existing.id === project.id)) projects.push(project);
+  });
+  const reviewStatuses = storageGet(STORAGE_KEYS.reviewStatuses, {});
+  projects.forEach((project) => {
+    if (reviewStatuses[project.id]) project.reviewStatus = reviewStatuses[project.id];
+  });
+}
+
+function saveSubmittedProjects() {
+  storageSet(
+    STORAGE_KEYS.submittedProjects,
+    projects.filter((project) => project.isSubmitted),
+  );
+}
+
+function saveReviewStatuses() {
+  const statuses = {};
+  projects.forEach((project) => {
+    if (project.reviewStatus && project.reviewStatus !== "Not reviewed") {
+      statuses[project.id] = project.reviewStatus;
+    }
+  });
+  storageSet(STORAGE_KEYS.reviewStatuses, statuses);
+}
+
+function tokenize(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]+/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length > 2 && !STOPWORDS.has(token));
+}
+
+function uniqueTokens(value) {
+  return new Set(tokenize(value));
+}
+
+function projectSearchText(project) {
+  return [
+    project.title,
+    project.description,
+    project.country,
+    project.region,
+    project.sector,
+    project.subsector,
+    project.beneficiaries,
+    project.teamBackground,
+    project.tractionEvidence,
+  ].join(" ");
+}
+
+function recordSearchText(record) {
+  return [
+    record.title,
+    record.description,
+    record.country,
+    record.region,
+    record.sector,
+    record.subsector,
+    record.donor,
+  ].join(" ");
+}
+
+function buildOecdMatchingCorpus() {
+  const seen = new Set();
+  const records = [];
+  Object.values(oecd.projectIntel || {}).forEach((intel) => {
+    (intel.similarProjects || []).forEach((record) => {
+      const key = [record.title, record.donor, record.country, record.year].join("|");
+      if (!seen.has(key)) {
+        seen.add(key);
+        records.push(record);
+      }
+    });
+  });
+  return records;
+}
+
+function sameText(a, b) {
+  return String(a || "").toLowerCase() === String(b || "").toLowerCase();
+}
+
+function recordScore(project, record) {
+  const projectTokens = uniqueTokens(projectSearchText(project));
+  const recordTokens = uniqueTokens(recordSearchText(record));
+  let overlap = 0;
+  projectTokens.forEach((token) => {
+    if (recordTokens.has(token)) overlap += 1;
+  });
+  let score = overlap;
+  if (sameText(project.sector, record.sector)) score += 5;
+  if (sameText(project.country, record.country)) score += 6;
+  if (sameText(project.region, record.region)) score += 2;
+  if (String(record.sector || "").toLowerCase().includes(String(project.sector || "").toLowerCase())) score += 2;
+  return score;
+}
+
+function generateFundingContext(project) {
+  const corpus = buildOecdMatchingCorpus();
+  const scored = corpus
+    .map((record) => ({ ...record, score: recordScore(project, record) }))
+    .filter((record) => record.score > 2)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8);
+
+  const donorMap = new Map();
+  scored.forEach((record) => {
+    const existing = donorMap.get(record.donor) || {
+      name: record.donor,
+      records: 0,
+      amount: 0,
+      countries: new Set(),
+      sectors: new Set(),
+    };
+    existing.records += 1;
+    existing.amount += Number(record.amount || 0);
+    existing.countries.add(record.country);
+    existing.sectors.add(record.sector);
+    donorMap.set(record.donor, existing);
+  });
+
+  const potentialFunders = Array.from(donorMap.values())
+    .sort((a, b) => b.records - a.records || b.amount - a.amount)
+    .slice(0, 3)
+    .map((funder) => ({
+      name: funder.name,
+      fit: funder.records >= 3 ? "High" : funder.records >= 2 ? "Medium-High" : "Medium",
+      amountLabel: funder.amount ? `$${funder.amount >= 1 ? `${funder.amount.toFixed(1)}M` : `${Math.round(funder.amount * 1000)}K`}` : "Matched records",
+      reason: `Appears in ${funder.records} related OECD funding record${funder.records === 1 ? "" : "s"} touching ${Array.from(funder.sectors).slice(0, 2).join(", ")} themes.`,
+    }));
+
+  return {
+    similarProjects: scored,
+    potentialFunders,
+    fallback:
+      scored.length < 2
+        ? "No strong historical matches were found in the available OECD records. This does not mean the project is not valuable; it means the current dataset has limited coverage for this project area."
+        : "",
+  };
+}
+
+function evidenceItems(project) {
+  const checks = [
+    ["Evidence link provided", "No evidence link", project.evidenceLink],
+    ["Pilot partner listed", "No pilot partner confirmation", project.pilotPartner],
+    ["Current users / beneficiaries provided", "No current users / beneficiaries count", project.usersReached],
+    ["Budget breakdown provided", "No budget breakdown", project.budgetBreakdown],
+    ["Traction/evidence provided", "No impact evidence", project.tractionEvidence],
+    ["Team background provided", "No team background", project.teamBackground],
+  ];
+  return {
+    available: checks.filter(([, , value]) => Boolean(String(value || "").trim())).map(([yes]) => yes),
+    missing: checks.filter(([, , value]) => !String(value || "").trim()).map(([, no]) => no),
+  };
+}
+
+function computeReadiness(project) {
+  const evidence = evidenceItems(project).available.length;
+  const hasFunding = Boolean(String(project.fundingNeed || "").trim());
+  const hasBeneficiaries = Boolean(String(project.beneficiaries || "").trim());
+  if ((project.stage === "Pilot-ready" || project.stage === "Active users") && evidence >= 2) return "Pilot-ready";
+  if (project.stage === "Prototype" && hasFunding && hasBeneficiaries) return "Pilot-oriented prototype";
+  if (project.description && project.sector) return "Early-stage";
+  return "Needs more information";
+}
+
+function readinessRationale(project) {
+  const items = [];
+  if (project.stage) items.push(`${project.stage} stage selected`);
+  if (project.beneficiaries) items.push("Target beneficiaries are clear");
+  if (project.fundingNeed) items.push("Funding request is specific");
+  items.push(project.evidenceLink ? "Evidence link is provided" : "Evidence link is missing");
+  items.push(project.pilotPartner ? "Pilot/local partner is listed" : "Pilot partner confirmation is missing");
+  items.push(project.budgetBreakdown ? "Budget breakdown is provided" : "Budget breakdown is missing");
+  items.push(project.tractionEvidence ? "Traction or early evidence is provided" : "Traction or impact evidence is missing");
+  return items;
+}
+
+function needsReviewItems(project) {
+  const missing = evidenceItems(project).missing;
+  const items = [...missing];
+  if (!project.impactMeasurement) items.push("Missing impact measurement plan");
+  return items.length ? items : ["Evidence package is relatively complete; verify claims with source materials."];
+}
+
+function computeGap(project, intel) {
+  const topSectorLabels = (oecd.topSectors || []).map((sector) => String(sector.label || "").toLowerCase());
+  const sectorActive = topSectorLabels.some((label) => label.includes(String(project.sector || "").toLowerCase()));
+  const sameCountryMatches = (intel.similarProjects || []).filter((record) => sameText(record.country, project.country)).length;
+  const sameSectorMatches = (intel.similarProjects || []).filter((record) => sameText(record.sector, project.sector)).length;
+  if (!intel.similarProjects?.length) return "Unknown / Needs more data";
+  if (sectorActive && sameCountryMatches <= 1) return "Medium-High";
+  if (sameCountryMatches >= 3 && sameSectorMatches >= 3) return "Low";
+  return "Medium";
+}
+
+function gapRationale(project, intel) {
+  const topSectorLabels = (oecd.topSectors || []).map((sector) => sector.label);
+  const sectorActive = topSectorLabels.some((label) => String(label || "").toLowerCase().includes(String(project.sector || "").toLowerCase()));
+  const sameCountryMatches = (intel.similarProjects || []).filter((record) => sameText(record.country, project.country)).length;
+  const items = [];
+  items.push(
+    sectorActive
+      ? `${project.sector} appears as an active global funding sector in OECD records.`
+      : `${project.sector} has limited representation in the available OECD top-sector view.`,
+  );
+  items.push(`The submitted project is in ${project.country}.`);
+  items.push(`${sameCountryMatches} similar record${sameCountryMatches === 1 ? " was" : "s were"} found for the same country in the available matching corpus.`);
+  items.push("A local project signal exists in this underrepresented space.");
+  return items;
 }
 
 function barList(items, valueKey = "count") {
@@ -215,6 +496,7 @@ function funderWorkflow(active) {
     { id: "discover", label: "Discover", text: "Filter and browse self-reported projects." },
     { id: "review", label: "Review", text: "Open an evaluation packet." },
     { id: "act", label: "Act", text: "Shortlist, request evidence, or invite." },
+    { id: "manage", label: "Manage", text: "Track projects in the review queue." },
   ];
   return `<section class="workflow" aria-label="Funder workflow">
     ${steps
@@ -368,15 +650,74 @@ function renderDiscovery() {
   `;
 }
 
+function queueProjectCard(project) {
+  const status = getReviewStatus(project);
+  return `<article class="queue-card">
+    <div>
+      <h3>${escapeHtml(project.title)}</h3>
+      <p class="meta">${escapeHtml(project.country)} · ${escapeHtml(project.sector)}</p>
+    </div>
+    <div class="badge-row">
+      <span class="badge blue">Readiness: ${escapeHtml(project.readiness)}</span>
+      <span class="badge ${gapClass(project.opportunityGap)}">Opportunity Gap: ${escapeHtml(project.opportunityGap)}</span>
+      <span class="badge green">Verification: ${escapeHtml(project.verification)}</span>
+      <span class="badge ${reviewStatusClass(status)}">${escapeHtml(status)}</span>
+    </div>
+    <button class="btn primary packet-btn" data-project-id="${escapeHtml(project.id)}">Open Evaluation Packet</button>
+  </article>`;
+}
+
+function renderQueueGroup(title, status) {
+  const grouped = projects.filter((project) => getReviewStatus(project) === status);
+  return `<section class="card queue-group">
+    ${sectionHeader(title, `${grouped.length} project${grouped.length === 1 ? "" : "s"}`)}
+    <div class="queue-list">
+      ${grouped.length ? grouped.map(queueProjectCard).join("") : `<div class="empty">No projects in this status yet.</div>`}
+    </div>
+  </section>`;
+}
+
+function renderQueue() {
+  $("#queue").innerHTML = `
+    ${pageHeader(
+      "queue-title",
+      "Review Queue",
+      "Manage project review statuses after discovery and evaluation.",
+    )}
+    ${funderWorkflow("manage")}
+    <section class="queue-grid">
+      ${renderQueueGroup("Shortlisted", "Shortlisted")}
+      ${renderQueueGroup("Evidence Requested", "Evidence requested")}
+      ${renderQueueGroup("Invited to Apply", "Invited to apply")}
+      ${renderQueueGroup("Not Reviewed", "Not reviewed")}
+    </section>
+  `;
+}
+
 function getProject(id = state.selectedProjectId) {
   return projects.find((project) => project.id === id) || projects[0];
 }
 
 function getIntel(projectId) {
-  return oecd.projectIntel?.[projectId] || {
-    similarProjects: [],
-    potentialFunders: [],
-    gapSignal: { label: "Medium-High", interpretation: "Funding pattern requires review." },
+  const project = getProject(projectId);
+  const precomputed = oecd.projectIntel?.[projectId];
+  const generated = generateFundingContext(project);
+  if (precomputed) {
+    return {
+      ...precomputed,
+      fallback: "",
+      coverageNote:
+        "Funder relevance is based on available OECD funding records. Funders not represented in the dataset may not appear in this list.",
+    };
+  }
+  return {
+    ...generated,
+    gapSignal: {
+      label: computeGap(project, generated),
+      interpretation: "This is a funding-pattern signal for further review, not a conclusion about merit or investability.",
+    },
+    coverageNote:
+      "Funder relevance is based on available OECD funding records. Funders not represented in the dataset may not appear in this list.",
   };
 }
 
@@ -384,9 +725,31 @@ function renderProfileField(label, value) {
   return `<div class="field"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
 }
 
+function renderList(items) {
+  return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function renderEvidenceStatus(project) {
+  const evidence = evidenceItems(project);
+  return `<article class="card evidence-card">
+    ${sectionHeader("Evidence Status", "Self-reported does not mean verified. This section helps funders see what evidence is available and what should be requested next.")}
+    <span class="badge green">Verification status: Self-reported</span>
+    <div class="split-list section">
+      <div>
+        <h3>Available Evidence</h3>
+        ${evidence.available.length ? renderList(evidence.available) : `<p class="meta">No supporting evidence fields have been provided yet.</p>`}
+      </div>
+      <div>
+        <h3>Missing Evidence</h3>
+        ${renderList(evidence.missing.length ? evidence.missing : ["No major evidence gaps flagged by the current form."])}
+      </div>
+    </div>
+  </article>`;
+}
+
 function renderSimilarTable(records) {
   if (!records.length) {
-    return `<div class="empty">No similar OECD-funded projects are available for this submitted project yet.</div>`;
+    return `<div class="empty">No strong historical matches were found in the available OECD records. This does not mean the project is not valuable; it means the current dataset has limited coverage for this project area.</div>`;
   }
   const rows = records.slice(0, 6).map(
     (record) => `<tr>
@@ -419,7 +782,7 @@ function renderSimilarTable(records) {
 
 function renderFunders(funders) {
   if (!funders.length) {
-    return `<div class="empty">No matching funder patterns were generated from the OECD records.</div>`;
+    return `<div class="empty">No strong funder patterns were found in the available records. This may reflect dataset coverage, not lack of project value.</div>`;
   }
   return `<div class="grid three">
     ${funders
@@ -442,8 +805,11 @@ function renderDetail() {
   const project = getProject();
   const intel = getIntel(project.id);
   const gap = intel.gapSignal || {};
-  const gapLabel = project.opportunityGap;
+  const gapLabel = project.opportunityGap || gap.label || "Unknown / Needs more data";
   const reviewStatus = getReviewStatus(project);
+  const readiness = project.readiness || computeReadiness(project);
+  const readinessReasons = readinessRationale(project);
+  const gapReasons = project.gapRationale || gapRationale(project, intel);
   $("#detail").innerHTML = `
     ${pageHeader(
       "detail-title",
@@ -451,8 +817,8 @@ function renderDetail() {
       `${project.country} · ${project.sector} · ${project.stage}`,
       "",
       `<span class="badge green">Verification: ${escapeHtml(project.verification)}</span>
-       <span class="badge blue">Readiness: ${escapeHtml(project.readiness)}</span>
-       <span class="badge ${gapClass(project.opportunityGap)}">Opportunity Gap: ${escapeHtml(project.opportunityGap)}</span>
+       <span class="badge blue">Readiness: ${escapeHtml(readiness)}</span>
+       <span class="badge ${gapClass(gapLabel)}">Opportunity Gap: ${escapeHtml(gapLabel)}</span>
        <span class="badge ${reviewStatusClass(reviewStatus)}">Current Review Status: ${escapeHtml(reviewStatus)}</span>
        <button class="btn review-action" data-action="shortlist">Shortlist</button>
        <button class="btn review-action" data-action="evidence">Request Evidence</button>
@@ -479,31 +845,37 @@ function renderDetail() {
           ${renderProfileField("Stage", project.stage)}
           ${renderProfileField("Funding Need", `${project.fundingNeed} pilot grant`)}
           ${renderProfileField("Verification", project.verification)}
+          ${renderProfileField("Current Review Status", reviewStatus)}
+          ${project.pilotPartner ? renderProfileField("Pilot / Local Partner", project.pilotPartner) : ""}
+          ${project.usersReached ? renderProfileField("Current Users / Beneficiaries", project.usersReached) : ""}
+          ${project.budgetBreakdown ? renderProfileField("Budget Breakdown", project.budgetBreakdown) : ""}
+          ${project.teamBackground ? renderProfileField("Team Background", project.teamBackground) : ""}
+          ${project.tractionEvidence ? renderProfileField("Traction / Evidence", project.tractionEvidence) : ""}
+          ${project.impactMeasurement ? renderProfileField("Impact Measurement Plan", project.impactMeasurement) : ""}
         </div>
         <div class="section note-panel"><strong>Verification status: Self-reported.</strong></div>
       </article>
       <article class="card">
         ${sectionHeader("Readiness & Risks", "Readiness is separate from funder relevance.")}
-        <span class="badge blue">${escapeHtml(project.readiness)}</span>
+        <span class="badge blue">${escapeHtml(readiness)}</span>
         <div class="split-list section">
           <div>
             <h3>Strengths</h3>
-            <ul>
-              <li>Clear local problem</li>
-              <li>Specific target beneficiaries</li>
-              <li>Prototype claimed</li>
-              <li>Concrete funding request</li>
-            </ul>
+            ${renderList([
+              project.description ? "Clear project description" : "Project description needs detail",
+              project.beneficiaries ? "Specific target beneficiaries" : "Target beneficiaries need detail",
+              project.stage ? `${project.stage} stage selected` : "Stage needs confirmation",
+              project.fundingNeed ? "Concrete funding request" : "Funding request needs detail",
+            ])}
           </div>
           <div>
             <h3>Needs Review</h3>
-            <ul>
-              <li>Pilot school confirmation needed</li>
-              <li>Budget breakdown needed</li>
-              <li>User feedback evidence needed</li>
-              <li>Impact measurement plan needed</li>
-            </ul>
+            ${renderList(needsReviewItems(project))}
           </div>
+        </div>
+        <div class="section rationale-box">
+          <h3>Why this readiness?</h3>
+          ${renderList(readinessReasons)}
         </div>
         <div class="section">
           <h3>Recommended review questions</h3>
@@ -517,20 +889,26 @@ function renderDetail() {
         </div>
       </article>
     </section>
+    <section class="section">
+      ${renderEvidenceStatus(project)}
+    </section>
 
     <section class="section card">
       ${sectionHeader("Funding Context", "Historical philanthropy records that may indicate funder relevance.")}
       <p class="lead">OECD philanthropy data is used as a funding intelligence layer. It helps identify which funders may care about this project area based on historical funding behavior.</p>
       ${renderSimilarTable(intel.similarProjects || [])}
       <div class="section note-panel"><strong>Similar funded projects indicate funder relevance, not proof of project quality.</strong></div>
+      <div class="section note-panel"><strong>${escapeHtml(intel.coverageNote)}</strong></div>
       <div class="split-list">
         <div>
           <h3>Relevant funding patterns</h3>
-          <ul>
-            <li>${escapeHtml(project.sector)} projects have received funding in ${escapeHtml(project.region)}.</li>
-            <li>Donors have previously supported related local delivery and access themes.</li>
-            <li>The project aligns with historical philanthropy themes in OECD records.</li>
-          </ul>
+          ${renderList([
+            `${project.sector} projects have received funding in ${project.region}.`,
+            intel.similarProjects?.length
+              ? `${intel.similarProjects.length} related records were found in the available matching corpus.`
+              : "No strong historical matches were found in the available OECD records.",
+            "The project is contextualized against historical philanthropy themes in OECD records.",
+          ])}
         </div>
         <div class="note-panel">
           <strong>Funding intelligence only</strong>
@@ -551,11 +929,7 @@ function renderDetail() {
         <span class="badge green">Sector median by country: ${escapeHtml(gap.sectorMedianCountryAmountLabel || "Needs review")}</span>
       </div>
       <h3 class="section">Why this may be overlooked:</h3>
-      <ul>
-        <li>${escapeHtml(project.sector)} is an active global funding area.</li>
-        <li>${escapeHtml(project.country)} receives less targeted local funding than broader global activity in this theme.</li>
-        <li>A local project signal exists in this underrepresented space.</li>
-      </ul>
+      ${renderList(gapReasons)}
       <h3 class="section">Interpretation</h3>
       <p class="lead">This may be an overlooked opportunity for funders to investigate, not a guaranteed investment.</p>
       <div class="note-panel"><strong>Underfunding is a signal, not a conclusion.</strong></div>
@@ -586,9 +960,13 @@ function renderSubmit() {
           <label class="wide">Project Description<textarea name="description" required>Student volunteers are mapping local tutoring availability and matching learners to low-cost sessions in public libraries.</textarea></label>
           <label>Target Beneficiaries<input name="beneficiaries" required value="Public school students" /></label>
           <label>Funding Need<input name="funding" required value="$12,000" /></label>
-          <label>Readiness<select name="readiness"><option>Early-stage</option><option selected>Pilot-oriented prototype</option><option>Pilot-ready</option></select></label>
-          <label>Opportunity Gap<select name="gap"><option>Low</option><option>Medium</option><option selected>Medium-High</option><option>High</option></select></label>
-          <label>Evidence Link, optional<input name="evidence" placeholder="https://..." /></label>
+          <label>Evidence Link, optional<input name="evidence" placeholder="https://..." /><small>Demo, photos, website, GitHub, pitch deck, field report, or other proof.</small></label>
+          <label>Pilot partner or local partner<input name="pilotPartner" placeholder="School, clinic, NGO, community group" /></label>
+          <label>Current users / beneficiaries reached<input name="usersReached" placeholder="e.g. 120 students, 3 schools, 2 workshops" /></label>
+          <label>Budget breakdown<textarea name="budgetBreakdown" placeholder="How would the requested funding be used?"></textarea><small>How would the requested funding be used?</small></label>
+          <label>Team background<textarea name="teamBackground" placeholder="Who is building this and what local experience do they have?"></textarea></label>
+          <label>Traction or evidence<textarea name="tractionEvidence" placeholder="Any users, pilots, testimonials, workshops, or early results?"></textarea><small>Any users, pilots, testimonials, workshops, or early results?</small></label>
+          <label class="wide">Impact measurement plan<textarea name="impactMeasurement" placeholder="What outcome would be measured during a pilot?"></textarea></label>
         </div>
         <div class="section">
           <button class="btn primary" type="submit">Generate Opportunity Profile</button>
@@ -610,6 +988,13 @@ function renderSubmit() {
                 ${renderProfileField("Readiness", profile.readiness)}
                 ${renderProfileField("Opportunity gap", profile.opportunityGap)}
                 ${renderProfileField("Verification status", "Self-reported")}
+                ${profile.evidenceLink ? renderProfileField("Evidence link", profile.evidenceLink) : ""}
+                ${profile.pilotPartner ? renderProfileField("Pilot / local partner", profile.pilotPartner) : ""}
+                ${profile.usersReached ? renderProfileField("Current users / beneficiaries", profile.usersReached) : ""}
+                ${profile.budgetBreakdown ? renderProfileField("Budget breakdown", profile.budgetBreakdown) : ""}
+                ${profile.teamBackground ? renderProfileField("Team background", profile.teamBackground) : ""}
+                ${profile.tractionEvidence ? renderProfileField("Traction or evidence", profile.tractionEvidence) : ""}
+                ${profile.impactMeasurement ? renderProfileField("Impact measurement plan", profile.impactMeasurement) : ""}
               </div>
               <div class="section note-panel">Your project has been converted into a self-reported opportunity profile and added to the Funder Discovery Dashboard.</div>
               <div class="section badge-row">
@@ -673,6 +1058,7 @@ function renderCurrentPage() {
   renderOverview();
   renderDiscovery();
   renderDetail();
+  renderQueue();
   renderSignals();
   renderSubmit();
   document.querySelectorAll(".page").forEach((page) => page.classList.toggle("active", page.id === state.page));
@@ -686,6 +1072,13 @@ function goTo(page) {
 }
 
 document.addEventListener("click", (event) => {
+  if (event.target.closest("#reset-demo-data")) {
+    localStorage.removeItem(STORAGE_KEYS.submittedProjects);
+    localStorage.removeItem(STORAGE_KEYS.reviewStatuses);
+    window.location.reload();
+    return;
+  }
+
   const nav = event.target.closest(".nav-link");
   if (nav) {
     goTo(nav.dataset.page);
@@ -727,6 +1120,7 @@ document.addEventListener("click", (event) => {
     const [status, message] = messages[reviewAction.dataset.action] || messages.shortlist;
     project.reviewStatus = status;
     state.reviewMessage = message;
+    saveReviewStatuses();
     renderDetail();
   }
 });
@@ -743,28 +1137,41 @@ document.addEventListener("submit", (event) => {
   event.preventDefault();
   const form = new FormData(event.target);
   const title = form.get("title");
+  const stage = form.get("stage") || "Idea";
   const newProject = {
     id: `${slugify(title)}-${Date.now().toString(36)}`,
-    title: form.get("title"),
-    country: form.get("country"),
-    region: form.get("region"),
-    sector: form.get("sector"),
+    title: title || "Untitled local project",
+    country: form.get("country") || "Unspecified",
+    region: form.get("region") || "Unspecified",
+    sector: form.get("sector") || "Unspecified",
     subsector: form.get("subsector") || "General",
-    beneficiaries: form.get("beneficiaries"),
-    stage: form.get("stage"),
-    fundingNeed: form.get("funding"),
-    readiness: form.get("readiness"),
-    readinessFilter: readinessFilterFor(form.get("readiness")),
-    opportunityGap: form.get("gap"),
+    beneficiaries: form.get("beneficiaries") || "Unspecified",
+    stage,
+    fundingNeed: form.get("funding") || "Needs review",
     verification: "Self-reported",
-    description: form.get("description"),
+    description: form.get("description") || "No description provided.",
+    evidenceLink: form.get("evidence") || "",
+    pilotPartner: form.get("pilotPartner") || "",
+    usersReached: form.get("usersReached") || "",
+    budgetBreakdown: form.get("budgetBreakdown") || "",
+    teamBackground: form.get("teamBackground") || "",
+    tractionEvidence: form.get("tractionEvidence") || "",
+    impactMeasurement: form.get("impactMeasurement") || "",
     reviewStatus: "Not reviewed",
+    isSubmitted: true,
   };
+  newProject.readiness = computeReadiness(newProject);
+  newProject.readinessFilter = readinessFilterFor(newProject.readiness);
+  const newProjectIntel = generateFundingContext(newProject);
+  newProject.opportunityGap = computeGap(newProject, newProjectIntel);
+  newProject.gapRationale = gapRationale(newProject, newProjectIntel);
   projects.push(newProject);
   state.builderProfile = newProject;
   state.selectedProjectId = newProject.id;
   state.reviewMessage = "";
+  saveSubmittedProjects();
   renderSubmit();
 });
 
+initializeStoredData();
 renderCurrentPage();

@@ -1775,17 +1775,17 @@ function renderSubmit() {
     <section class="builder-submit-grid">
       <form id="project-form" class="card">
         <div class="form-grid">
-          <label>Builder Name<input name="builderName" required value="Mariana Torres" /></label>
-          <label>Builder Role<input name="builderRole" value="Student builder" /></label>
-          <label>Project Title<input name="title" required value="Community tutoring map for public libraries" /></label>
-          <label>Country<input name="country" required value="Colombia" /></label>
-          <label>Region<input name="region" required value="Latin America" /></label>
-          <label>Sector<input name="sector" required value="Education" /></label>
-          <label>Subsector<input name="subsector" value="Tutoring access / public learning spaces" /></label>
-          <label>Current Stage<select name="stage"><option>Idea</option><option selected>Prototype</option><option>Pilot-ready</option><option>Active users</option></select></label>
-          <label class="wide">Project Description<textarea name="description" required>Student volunteers are mapping local tutoring availability and matching learners to low-cost sessions in public libraries.</textarea></label>
-          <label>Target Beneficiaries<input name="beneficiaries" required value="Public school students" /></label>
-          <label>Funding Need<input name="funding" required value="$12,000" /></label>
+          <label>Builder Name<input name="builderName" required placeholder="Mariana Torres" /></label>
+          <label>Builder Role<input name="builderRole" placeholder="Student builder" /></label>
+          <label>Project Title<input name="title" required placeholder="Community tutoring map for public libraries" /></label>
+          <label>Country<input name="country" required placeholder="Colombia" /></label>
+          <label>Region<input name="region" required placeholder="Latin America" /></label>
+          <label>Sector<input name="sector" required placeholder="Education" /></label>
+          <label>Subsector<input name="subsector" placeholder="Tutoring access / public learning spaces" /></label>
+          <label>Current Stage<select name="stage"><option>Idea</option><option>Prototype</option><option>Pilot-ready</option><option>Active users</option></select></label>
+          <label class="wide">Project Description<textarea name="description" required placeholder="Student volunteers are mapping local tutoring availability and matching learners to low-cost sessions in public libraries."></textarea></label>
+          <label>Target Beneficiaries<input name="beneficiaries" required placeholder="Public school students" /></label>
+          <label>Funding Need<input name="funding" required placeholder="$12,000" /></label>
           <label>Evidence Link, optional<input name="evidence" placeholder="https://..." /><small>Demo, photos, website, GitHub, pitch deck, field report, or other proof.</small></label>
           <label>Pilot partner or local partner<input name="pilotPartner" placeholder="School, clinic, NGO, community group" /></label>
           <label>Current users / beneficiaries reached<input name="usersReached" placeholder="e.g. 120 students, 3 schools, 2 workshops" /></label>

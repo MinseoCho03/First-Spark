@@ -751,6 +751,39 @@ label small {
   line-height: 1.55;
 }
 
+.recommendation-card {
+  position: relative;
+}
+
+.metric-stack {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metric-stack div {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.metric-stack span,
+.metric-stack small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.metric-stack strong {
+  display: block;
+  margin: 5px 0;
+  color: var(--ink);
+  font-size: 18px;
+}
+
 .meta {
   color: var(--muted);
   font-size: 13px;
@@ -1348,6 +1381,7 @@ a.btn {
   .activity-stats,
   .profile-grid,
   .split-list,
+  .metric-stack,
   .messages-shell,
   .message-form,
   .form-grid,

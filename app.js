@@ -714,6 +714,63 @@ function computeGap(project, intel) {
   return "Medium";
 }
 
+function opportunityGapScore(project, intel) {
+  const gapLabel = project.opportunityGap || intel.gapSignal?.label || computeGap(project, intel);
+  const baseScores = {
+    High: 92,
+    "Medium-High": 78,
+    Medium: 56,
+    Low: 28,
+    "Unknown / Needs more data": 36,
+  };
+  let score = baseScores[gapLabel] || 45;
+  const sameCountryMatches = (intel.similarProjects || []).filter((record) => sameText(record.country, project.country)).length;
+  const similarCount = (intel.similarProjects || []).length;
+  if (similarCount && sameCountryMatches === 0) score += 8;
+  if (sameCountryMatches >= 3) score -= 10;
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function funderAlignmentScore(project, intel) {
+  const similarProjects = intel.similarProjects || [];
+  const funders = intel.potentialFunders || [];
+  const sameSectorMatches = similarProjects.filter((record) => sameText(record.sector, project.sector)).length;
+  const sameCountryMatches = similarProjects.filter((record) => sameText(record.country, project.country)).length;
+  const sameRegionMatches = similarProjects.filter((record) => sameText(record.region, project.region)).length;
+  const bestKeywordMatch = Math.max(0, ...similarProjects.map((record) => record.score || recordScore(project, record)));
+  const fitScores = { High: 8, "Medium-High": 6, Medium: 4 };
+  const funderFit = Math.min(18, funders.reduce((sum, funder) => sum + (fitScores[funder.fit] || 3), 0));
+  const keywordFit = Math.min(22, bestKeywordMatch * 1.4);
+  const sectorFit = Math.min(20, sameSectorMatches * 3);
+  const countryFit = Math.min(18, sameCountryMatches * 4.5);
+  const regionFit = Math.min(10, sameRegionMatches * 2.5);
+  const matchDepth = Math.min(12, similarProjects.length * 1.5);
+  return Math.max(0, Math.min(100, Math.round(funderFit + keywordFit + sectorFit + countryFit + regionFit + matchDepth)));
+}
+
+function recommendationSignal(project) {
+  const intel = getIntel(project.id);
+  const gapScore = opportunityGapScore(project, intel);
+  const alignmentScore = funderAlignmentScore(project, intel);
+  const score = Math.round(gapScore * 0.55 + alignmentScore * 0.45);
+  const sameCountryMatches = (intel.similarProjects || []).filter((record) => sameText(record.country, project.country)).length;
+  return {
+    score,
+    gapScore,
+    alignmentScore,
+    intel,
+    sameCountryMatches,
+    similarCount: intel.similarProjects?.length || 0,
+  };
+}
+
+function recommendedProjects(limit = 3) {
+  return projects
+    .map((project) => ({ project, signal: recommendationSignal(project) }))
+    .sort((a, b) => b.signal.score - a.signal.score)
+    .slice(0, limit);
+}
+
 function gapRationale(project, intel) {
   const topSectorLabels = (oecd.topSectors || []).map((sector) => sector.label);
   const sectorActive = topSectorLabels.some((label) => String(label || "").toLowerCase().includes(String(project.sector || "").toLowerCase()));
@@ -904,6 +961,42 @@ function projectCard(project, featured = false) {
   </article>`;
 }
 
+function recommendationCard(project, signal) {
+  return `<article class="card project-card recommendation-card">
+    <div class="project-card-head">
+      <h3>${escapeHtml(project.title)}</h3>
+      <div class="meta">${escapeHtml(project.country)} · ${escapeHtml(project.region)}</div>
+      <div class="meta">${escapeHtml(project.sector)} · ${escapeHtml(project.subsector || "General")}</div>
+      <button class="builder-link" data-builder-id="${escapeHtml(project.builderId)}" data-project-id="${escapeHtml(project.id)}" type="button">
+        ${escapeHtml(builderName(project))}
+        <span>${escapeHtml(builderRole(project))}</span>
+      </button>
+    </div>
+    <p>${escapeHtml(project.description)}</p>
+    <div class="metric-stack">
+      <div>
+        <span>Opportunity Gap</span>
+        <strong>${escapeHtml(signal.gapScore)}/100</strong>
+      </div>
+      <div>
+        <span>Funder Alignment</span>
+        <strong>${escapeHtml(signal.alignmentScore)}/100</strong>
+      </div>
+    </div>
+    <div class="badge-row">
+      <span class="badge ${gapClass(project.opportunityGap)}">Gap: ${escapeHtml(project.opportunityGap)}</span>
+      <span class="badge green">Verification: ${escapeHtml(project.verification)}</span>
+    </div>
+    <div class="card-footer">
+      <span class="money">Recommended for review</span>
+      <div class="action-row">
+        <button class="btn contact-builder-btn" data-project-id="${escapeHtml(project.id)}">Contact Builder</button>
+        <button class="btn primary packet-btn" data-project-id="${escapeHtml(project.id)}">View</button>
+      </div>
+    </div>
+  </article>`;
+}
+
 function pageHeader(id, title, subtitle, description = "", actions = "", portal = "Funder Portal") {
   return `<header class="page-header">
     <div>
@@ -917,7 +1010,7 @@ function pageHeader(id, title, subtitle, description = "", actions = "", portal 
 }
 
 function renderOverview() {
-  const featured = projects.slice(0, 3);
+  const recommendations = recommendedProjects(3);
   const countryCount = new Set(projects.map((project) => project.country)).size;
   const highGapCount = projects.filter((project) => project.opportunityGap === "High" || project.opportunityGap === "Medium-High").length;
   const pilotReadyCount = projects.filter((project) => project.readiness === "Pilot-ready").length;
@@ -945,9 +1038,9 @@ function renderOverview() {
       </article>
     </section>
     <section class="section">
-      ${sectionHeader("Featured Opportunity Gaps", "Self-reported projects with reviewable funding gaps and structured project context.")}
+      ${sectionHeader("Recommended Review Opportunities", "Ranked by opportunity gap and funder alignment signals. This is a review-priority signal, not a quality judgment.")}
       <div class="grid three">
-        ${featured.map((project) => projectCard(project, true)).join("")}
+        ${recommendations.map(({ project, signal }) => recommendationCard(project, signal)).join("")}
       </div>
     </section>
     <section class="section note-panel">
@@ -1466,6 +1559,7 @@ function renderDetail() {
   const readinessReasons = readinessRationale(project);
   const gapReasons = project.gapRationale || gapRationale(project, intel);
   const stageClass = project.stage === "Pilot-ready" ? "green" : project.stage === "Idea" ? "amber" : "blue";
+  const recommendation = recommendationSignal(project);
   $("#detail").innerHTML = `
     ${pageHeader(
       "detail-title",
@@ -1556,6 +1650,18 @@ function renderDetail() {
     <section class="section card">
       ${sectionHeader("Funding Context", "Historical philanthropy records that may indicate funder relevance.")}
       <p class="lead">OECD philanthropy data is used as a funding intelligence layer. It helps identify which funders may care about this project area based on historical funding behavior.</p>
+      <div class="metric-stack section">
+        <div>
+          <span>Funder Alignment Score</span>
+          <strong>${escapeHtml(recommendation.alignmentScore)}/100</strong>
+          <small>Based on similar funded records, same-country/sector matches, and potentially relevant funder fit.</small>
+        </div>
+        <div>
+          <span>Recommendation Weight</span>
+          <strong>45%</strong>
+          <small>Alignment increases review priority, but does not prove project quality.</small>
+        </div>
+      </div>
       ${renderSimilarTable(intel.similarProjects || [])}
       <div class="section note-panel"><strong>Similar funded projects indicate funder relevance, not proof of project quality.</strong> ${escapeHtml(intel.coverageNote)}</div>
       <div class="split-list">
@@ -1584,8 +1690,21 @@ function renderDetail() {
       ${sectionHeader("Opportunity Gap", "Funding-pattern context for responsible investigation.")}
       <div class="badge-row">
         <span class="badge ${gapClass(gapLabel)}">Opportunity Gap: ${escapeHtml(gapLabel)}</span>
+        <span class="badge amber">Gap Score: ${escapeHtml(recommendation.gapScore)}/100</span>
         <span class="badge blue">Country-sector funding: ${escapeHtml(gap.countrySectorAmountLabel || "Needs review")}</span>
         <span class="badge green">Sector median by country: ${escapeHtml(gap.sectorMedianCountryAmountLabel || "Needs review")}</span>
+      </div>
+      <div class="metric-stack section">
+        <div>
+          <span>Opportunity Gap Score</span>
+          <strong>${escapeHtml(recommendation.gapScore)}/100</strong>
+          <small>Higher when the sector is active globally but fewer similar same-country records appear.</small>
+        </div>
+        <div>
+          <span>Recommendation Weight</span>
+          <strong>55%</strong>
+          <small>Gap is treated as a review signal, not a conclusion about deserving funding.</small>
+        </div>
       </div>
       <h3 class="section">Why this may be overlooked:</h3>
       ${renderList(gapReasons)}

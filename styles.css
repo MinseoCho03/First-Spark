@@ -1034,6 +1034,108 @@ textarea {
   gap: 14px;
 }
 
+.readiness-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.readiness-summary div {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.readiness-summary span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.readiness-summary strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 16px;
+}
+
+.readiness-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.readiness-grid > div {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 10px;
+  color: var(--muted-strong);
+  background: var(--panel-soft);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.chip.green {
+  color: var(--green);
+  border-color: #bce5d9;
+  background: var(--green-soft);
+}
+
+.chip.amber {
+  color: var(--amber);
+  border-color: #f4dc9c;
+  background: var(--amber-soft);
+}
+
+.question-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.question-grid span {
+  display: grid;
+  gap: 7px;
+  min-height: 96px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted-strong);
+  background: var(--panel-soft);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.question-grid b {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: #ffffff;
+  background: var(--blue);
+  font-size: 12px;
+}
+
 ul,
 ol {
   margin: 0;
@@ -1047,6 +1149,12 @@ ol {
   border: 1px solid var(--line);
   border-radius: 8px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.funding-table-section {
+  margin-top: 30px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
 }
 
 table {
@@ -1461,6 +1569,9 @@ a.btn {
   .packet-strip,
   .workflow,
   .act-panel,
+  .readiness-summary,
+  .readiness-grid,
+  .question-grid,
   .messages-shell {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1485,6 +1596,9 @@ a.btn {
   .activity-stats,
   .profile-grid,
   .split-list,
+  .readiness-summary,
+  .readiness-grid,
+  .question-grid,
   .metric-stack,
   .messages-shell,
   .message-form,

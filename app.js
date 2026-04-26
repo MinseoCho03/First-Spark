@@ -1323,6 +1323,12 @@ function renderList(items) {
   return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
 }
 
+function renderChipList(items, tone = "blue") {
+  return `<div class="chip-list">
+    ${items.map((item) => `<span class="chip ${tone}">${escapeHtml(item)}</span>`).join("")}
+  </div>`;
+}
+
 function renderEvidenceStatus(project) {
   const evidence = evidenceItems(project);
   return `<article class="card evidence-card">
@@ -1596,6 +1602,62 @@ function renderFunders(funders) {
   </div>`;
 }
 
+function renderReadinessPanel(project, readiness) {
+  const evidence = evidenceItems(project);
+  const strengths = [
+    project.description ? "Problem described" : "Problem needs detail",
+    project.beneficiaries ? "Beneficiaries named" : "Beneficiaries unclear",
+    project.stage ? `${project.stage} stage` : "Stage missing",
+    project.fundingNeed ? "Funding ask stated" : "Funding ask missing",
+  ];
+  const reviewFlags = needsReviewItems(project).slice(0, 5);
+  const questions = [
+    "Demo or screenshots?",
+    "Pilot partner letter?",
+    "Budget breakdown?",
+    "Beneficiaries reached?",
+    "Outcome to measure?",
+  ];
+
+  return `<section class="section card readiness-card">
+    ${sectionHeader("Readiness & Risks", "Quick scan of what looks reviewable and what still needs evidence.")}
+    <div class="readiness-summary">
+      <div>
+        <span>Readiness</span>
+        <strong>${escapeHtml(readiness)}</strong>
+      </div>
+      <div>
+        <span>Stage</span>
+        <strong>${escapeHtml(project.stage)}</strong>
+      </div>
+      <div>
+        <span>Evidence Fields</span>
+        <strong>${escapeHtml(evidence.available.length)}/6</strong>
+      </div>
+      <div>
+        <span>Needs Review</span>
+        <strong>${escapeHtml(reviewFlags.length)}</strong>
+      </div>
+    </div>
+    <div class="readiness-grid section">
+      <div>
+        <h3>Ready Signals</h3>
+        ${renderChipList(strengths, "green")}
+      </div>
+      <div>
+        <h3>Review Flags</h3>
+        ${renderChipList(reviewFlags, "amber")}
+      </div>
+    </div>
+    <div class="section">
+      <h3>Key Review Questions</h3>
+      <div class="question-grid">
+        ${questions.map((question, index) => `<span><b>${index + 1}</b>${escapeHtml(question)}</span>`).join("")}
+      </div>
+    </div>
+  </section>`;
+}
+
 function renderDetail() {
   const project = getProject();
   const intel = getIntel(project.id);
@@ -1603,7 +1665,6 @@ function renderDetail() {
   const gapLabel = project.opportunityGap || gap.label || "Unknown / Needs more data";
   const reviewStatus = getReviewStatus(project);
   const readiness = project.readiness || computeReadiness(project);
-  const readinessReasons = readinessRationale(project);
   const gapReasons = project.gapRationale || gapRationale(project, intel);
   const stageClass = project.stage === "Pilot-ready" ? "green" : project.stage === "Idea" ? "amber" : "blue";
   const recommendation = recommendationSignal(project);
@@ -1623,10 +1684,10 @@ function renderDetail() {
     <section class="packet-strip">
       <article><span>Packet Type</span><strong>Funder Review</strong></article>
       <article><span>Primary Need</span><strong>${escapeHtml(project.fundingNeed)} pilot grant</strong></article>
-      <article><span>Evidence Status</span><strong>Self-reported</strong></article>
+      <article><span>Verification</span><strong>Self-reported</strong></article>
       <article><span>OECD Layer</span><strong>Funding intelligence</strong></article>
     </section>
-    <section class="section detail-layout">
+    <section class="section">
       <article class="card">
         ${sectionHeader("Project Snapshot", "Structured project record prepared for funder screening.")}
         <div class="profile-grid">
@@ -1656,81 +1717,24 @@ function renderDetail() {
         </div>
         <div class="section note-panel"><strong>Verification status: Self-reported.</strong></div>
       </article>
-      <article class="card">
-        ${sectionHeader("Readiness & Risks", "Readiness is separate from funder relevance.")}
-        <span class="badge blue">${escapeHtml(readiness)}</span>
-        <div class="split-list section">
-          <div>
-            <h3>Strengths</h3>
-            ${renderList([
-              project.description ? "Clear project description" : "Project description needs detail",
-              project.beneficiaries ? "Specific target beneficiaries" : "Target beneficiaries need detail",
-              project.stage ? `${project.stage} stage selected` : "Stage needs confirmation",
-              project.fundingNeed ? "Concrete funding request" : "Funding request needs detail",
-            ])}
-          </div>
-          <div>
-            <h3>Needs Review</h3>
-            ${renderList(needsReviewItems(project))}
-          </div>
-        </div>
-        <div class="section rationale-box">
-          <h3>Why this readiness?</h3>
-          ${renderList(readinessReasons)}
-        </div>
-        <div class="section">
-          <h3>Recommended review questions</h3>
-          <ol>
-            <li>Can the builder provide a demo or screenshots?</li>
-            <li>Is there a letter from a pilot partner?</li>
-            <li>What is the budget breakdown?</li>
-            <li>How many users or beneficiaries will be reached?</li>
-            <li>What outcome will be measured?</li>
-          </ol>
-        </div>
-      </article>
     </section>
-    <section class="section">
-      ${renderEvidenceStatus(project)}
-    </section>
-
     <section class="section card">
-      ${sectionHeader("Funding Context", "Historical philanthropy records that may indicate funder relevance.")}
-      <p class="lead">OECD philanthropy data is used as a funding intelligence layer. It helps identify which funders may care about this project area based on historical funding behavior.</p>
-      <div class="metric-stack section">
-        <div>
-          <span>Funder Alignment Score</span>
-          <strong>${escapeHtml(recommendation.alignmentScore)}/100</strong>
-          <small>Based on similar funded records, same-country/sector matches, and potentially relevant funder fit.</small>
-        </div>
-        <div>
-          <span>Recommendation Weight</span>
-          <strong>45%</strong>
-          <small>Alignment increases review priority, but does not prove project quality.</small>
-        </div>
-      </div>
-      ${renderSimilarTable(intel.similarProjects || [])}
-      <div class="section note-panel"><strong>Similar funded projects indicate funder relevance, not proof of project quality.</strong> ${escapeHtml(intel.coverageNote)}</div>
-      <div class="split-list">
-        <div>
-          <h3>Relevant funding patterns</h3>
-          ${renderList([
-            `${project.sector} projects have received funding in ${project.region}.`,
-            intel.similarProjects?.length
-              ? `${intel.similarProjects.length} related records were found in the available matching corpus.`
-              : "No strong historical matches were found in the available OECD records.",
-            "The project is contextualized against historical philanthropy themes in OECD records.",
-          ])}
-        </div>
-        <div class="note-panel">
-          <strong>Funding intelligence only</strong>
-          <p>OECD data is not used as talent data. It contextualizes historical funding patterns, similar funded projects, and funder relevance.</p>
-        </div>
+      ${sectionHeader("Funding Context", "A funding-intelligence view of where this project fits in historical philanthropy patterns.")}
+      <p class="lead">This section does not evaluate the builder or prove project quality. It uses OECD funding records to show whether similar themes, countries, sectors, or funders have appeared in past philanthropy activity.</p>
+      <div class="badge-row section">
+        <span class="badge blue">Funder Alignment: ${escapeHtml(recommendation.alignmentScore)}/100</span>
+        <span class="badge green">${escapeHtml(intel.similarProjects?.length || 0)} similar records</span>
+        <span class="badge amber">Dataset coverage may be incomplete</span>
       </div>
       <div class="section">
         <h3>Potentially Relevant Funders</h3>
         ${renderFunders(intel.potentialFunders || [])}
       </div>
+      <div class="section funding-table-section">
+        <h3>Similar Funded Projects from OECD Records</h3>
+        ${renderSimilarTable(intel.similarProjects || [])}
+      </div>
+      <div class="section note-panel"><strong>Similar funded projects indicate funder relevance, not proof of project quality.</strong> ${escapeHtml(intel.coverageNote)}</div>
     </section>
 
     <section class="section card">
@@ -1759,6 +1763,7 @@ function renderDetail() {
       <p class="lead">This may be an overlooked opportunity for funders to investigate, not a guaranteed investment.</p>
       <div class="note-panel"><strong>Underfunding is a signal, not a conclusion.</strong></div>
     </section>
+    ${renderReadinessPanel(project, readiness)}
   `;
 }
 

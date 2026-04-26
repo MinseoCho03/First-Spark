@@ -106,6 +106,7 @@ const manualRegion = [
 const STORAGE_KEYS = {
   submittedProjects: "opportunityAtlas.submittedProjects.v1",
   reviewStatuses: "opportunityAtlas.reviewStatuses.v1",
+  builderActivity: "opportunityAtlas.builderActivity.v1",
 };
 
 const STOPWORDS = new Set([
@@ -135,8 +136,25 @@ const STOPWORDS = new Set([
   "with",
 ]);
 
+function initialPage() {
+  const hashPage = window.location.hash.replace("#", "");
+  const allowedPages = new Set([
+    "overview",
+    "discovery",
+    "detail",
+    "queue",
+    "funder-history",
+    "signals",
+    "submit",
+    "builder-history",
+    "builder-notifications",
+  ]);
+  if (allowedPages.has(hashPage)) return hashPage;
+  return window.__INITIAL_PAGE__ || "overview";
+}
+
 const state = {
-  page: window.__INITIAL_PAGE__ || "overview",
+  page: initialPage(),
   selectedProjectId: "offline-learning-ghana",
   builderProfile: null,
   reviewMessage: "",
@@ -171,6 +189,7 @@ function gapClass(value) {
 }
 
 function reviewStatusClass(value) {
+  if (value === "Funded") return "green";
   if (value === "Invited to apply") return "green";
   if (value === "Evidence requested") return "blue";
   if (value === "Shortlisted") return "amber";
@@ -185,6 +204,15 @@ function fitClass(value) {
 
 function compactNumber(value) {
   return new Intl.NumberFormat("en-US").format(value || 0);
+}
+
+function fundingAmountValue(value) {
+  return Number(String(value || "").replace(/[^0-9.]+/g, "")) || 0;
+}
+
+function fundingAmountLabel(value) {
+  if (!value) return "$0";
+  return `$${compactNumber(value)}`;
 }
 
 function truncateText(value, limit = 210) {
@@ -217,6 +245,13 @@ function getReviewStatus(project) {
   return project.reviewStatus || "Not reviewed";
 }
 
+function formatDate(value) {
+  if (!value) return "Today";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Today";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
 function storageGet(key, fallback) {
   try {
     const value = localStorage.getItem(key);
@@ -241,6 +276,7 @@ function normalizeProject(project) {
     opportunityGap: project.opportunityGap || "Medium",
     verification: "Self-reported",
     reviewStatus: "Not reviewed",
+    submittedAt: project.submittedAt || new Date().toISOString(),
     ...project,
   };
 }
@@ -253,6 +289,7 @@ function initializeStoredData() {
   const reviewStatuses = storageGet(STORAGE_KEYS.reviewStatuses, {});
   projects.forEach((project) => {
     if (reviewStatuses[project.id]) project.reviewStatus = reviewStatuses[project.id];
+    if (project.isSubmitted) initializeBuilderActivity(project);
   });
 }
 
@@ -271,6 +308,93 @@ function saveReviewStatuses() {
     }
   });
   storageSet(STORAGE_KEYS.reviewStatuses, statuses);
+}
+
+function builderProjects() {
+  return projects.filter((project) => project.isSubmitted);
+}
+
+function defaultBuilderActivity(project) {
+  return {
+    projectId: project.id,
+    submittedAt: project.submittedAt || new Date().toISOString(),
+    searchAppearances: 0,
+    profileViews: 0,
+    searchEvents: [],
+    viewers: [],
+  };
+}
+
+function getBuilderActivity(project, store = storageGet(STORAGE_KEYS.builderActivity, {})) {
+  return {
+    ...defaultBuilderActivity(project),
+    ...(store[project.id] || {}),
+  };
+}
+
+function updateBuilderActivity(project, updater) {
+  const store = storageGet(STORAGE_KEYS.builderActivity, {});
+  const activity = getBuilderActivity(project, store);
+  store[project.id] = updater(activity) || activity;
+  storageSet(STORAGE_KEYS.builderActivity, store);
+  return store[project.id];
+}
+
+function initializeBuilderActivity(project) {
+  updateBuilderActivity(project, (activity) => activity);
+}
+
+function funderViewerForProject(project, activity) {
+  const intel = getIntel(project.id);
+  const funders = intel.potentialFunders || [];
+  const funder = funders.length ? funders[activity.profileViews % funders.length] : null;
+  const roles = ["Program officer", "Grantmaking associate", "Fellowship scout", "Innovation fund reviewer"];
+  return {
+    organization: funder?.name || "Opportunity Atlas review desk",
+    role: roles[activity.profileViews % roles.length],
+  };
+}
+
+function recordBuilderSearchAppearances(visibleProjects, source = "Discovery filters") {
+  const eventKey = [
+    new Date().toISOString().slice(0, 10),
+    source,
+    state.filters.country,
+    state.filters.sector,
+    state.filters.stage,
+    state.filters.readiness,
+    state.filters.gap,
+  ].join("|");
+
+  visibleProjects.filter((project) => project.isSubmitted).forEach((project) => {
+    updateBuilderActivity(project, (activity) => {
+      const searchEvents = Array.isArray(activity.searchEvents) ? activity.searchEvents : [];
+      if (!searchEvents.includes(eventKey)) {
+        activity.searchEvents = [...searchEvents, eventKey];
+        activity.searchAppearances = activity.searchEvents.length;
+        activity.lastSearchAt = new Date().toISOString();
+      }
+      return activity;
+    });
+  });
+}
+
+function recordBuilderProfileView(project, source = "Evaluation Packet") {
+  if (!project?.isSubmitted) return;
+  updateBuilderActivity(project, (activity) => {
+    const viewer = funderViewerForProject(project, activity);
+    activity.profileViews = Number(activity.profileViews || 0) + 1;
+    activity.lastViewedAt = new Date().toISOString();
+    activity.viewers = [
+      {
+        ...viewer,
+        source,
+        viewedAt: activity.lastViewedAt,
+      },
+      ...(activity.viewers || []),
+    ].slice(0, 6);
+    return activity;
+  });
 }
 
 function tokenize(value) {
@@ -651,6 +775,32 @@ function queueProjectCard(project) {
   </article>`;
 }
 
+function fundedProjectCard(project) {
+  const intel = getIntel(project.id);
+  const leadFunder = intel.potentialFunders?.[0]?.name || "Opportunity Atlas funder";
+  return `<article class="history-item">
+    <div>
+      <h3>${escapeHtml(project.title)}</h3>
+      <p class="meta">${escapeHtml(project.country)} · ${escapeHtml(project.region)} · ${escapeHtml(project.sector)}</p>
+      <p class="meta">Recorded by ${escapeHtml(leadFunder)} as a demo funding decision.</p>
+    </div>
+    <div class="badge-row">
+      <span class="badge green">Funding status: Funded</span>
+      <span class="badge blue">Readiness: ${escapeHtml(project.readiness)}</span>
+      <span class="badge ${gapClass(project.opportunityGap)}">Opportunity Gap: ${escapeHtml(project.opportunityGap)}</span>
+      <span class="badge green">Verification: ${escapeHtml(project.verification)}</span>
+    </div>
+    <div class="activity-stats">
+      <div><span>Recorded Amount</span><strong>${escapeHtml(project.fundingNeed)}</strong></div>
+      <div><span>Stage</span><strong>${escapeHtml(project.stage)}</strong></div>
+      <div><span>Funding Context</span><strong>${escapeHtml(intel.potentialFunders?.length ? "Matched OECD funder signals" : "Limited dataset coverage")}</strong></div>
+    </div>
+    <div class="action-row">
+      <button class="btn primary packet-btn" data-project-id="${escapeHtml(project.id)}">Open Evaluation Packet</button>
+    </div>
+  </article>`;
+}
+
 function renderQueueGroup(title, status) {
   const grouped = projects.filter((project) => getReviewStatus(project) === status);
   return `<section class="card queue-group">
@@ -672,6 +822,35 @@ function renderQueue() {
       ${renderQueueGroup("Shortlisted", "Shortlisted")}
       ${renderQueueGroup("Evidence Requested", "Evidence requested")}
       ${renderQueueGroup("Invited to Apply", "Invited to apply")}
+      ${renderQueueGroup("Funded", "Funded")}
+    </section>
+  `;
+}
+
+function renderFunderHistory() {
+  const target = $("#funder-history");
+  if (!target) return;
+  const funded = projects.filter((project) => getReviewStatus(project) === "Funded");
+  const recordedFunding = funded.reduce((sum, project) => sum + fundingAmountValue(project.fundingNeed), 0);
+  const activePipeline = projects.filter((project) => ["Shortlisted", "Evidence requested", "Invited to apply"].includes(getReviewStatus(project))).length;
+  target.innerHTML = `
+    ${pageHeader(
+      "funder-history-title",
+      "Funding History",
+      "Track projects your funder team has marked as funded in this demo workflow.",
+    )}
+    <section class="grid four">
+      ${kpi("Funded Projects", funded.length)}
+      ${kpi("Recorded Funding", fundingAmountLabel(recordedFunding))}
+      ${kpi("Active Pipeline", activePipeline)}
+      ${kpi("Self-Reported Profiles", projects.length)}
+    </section>
+    <section class="section card">
+      ${sectionHeader("Recorded Funding History", "Projects marked funded from the Evaluation Packet action bar.")}
+      ${funded.length ? `<div class="history-list">${funded.map(fundedProjectCard).join("")}</div>` : `<div class="empty">No funded projects recorded yet. Open an Evaluation Packet and click Record Funding to add one here.</div>`}
+    </section>
+    <section class="section note-panel">
+      <strong>Demo record only:</strong> Recording funding here does not execute a financial transaction. It only helps funders track which projects they have marked as funded inside this prototype.
     </section>
   `;
 }
@@ -727,6 +906,195 @@ function renderEvidenceStatus(project) {
       </div>
     </div>
   </article>`;
+}
+
+function latestViewerLabel(activity) {
+  const latest = activity.viewers?.[0];
+  if (!latest) return "No profile views yet";
+  return `${latest.role} at ${latest.organization}`;
+}
+
+function renderBuilderHistory(projectList) {
+  if (!projectList.length) {
+    return `<div class="empty">No submitted projects yet. Submit a project to build your creator history.</div>`;
+  }
+
+  return `<div class="history-list">
+    ${projectList
+      .map((project) => {
+        const activity = getBuilderActivity(project);
+        const reviewStatus = getReviewStatus(project);
+        return `<article class="history-item">
+          <div>
+            <h3>${escapeHtml(project.title)}</h3>
+            <p class="meta">${escapeHtml(project.country)} · ${escapeHtml(project.region)} · ${escapeHtml(project.sector)}</p>
+            <p class="meta">Submitted ${escapeHtml(formatDate(activity.submittedAt || project.submittedAt))}</p>
+          </div>
+          <div class="badge-row">
+            <span class="badge green">Verification: Self-reported</span>
+            <span class="badge blue">Readiness: ${escapeHtml(project.readiness)}</span>
+            <span class="badge ${gapClass(project.opportunityGap)}">Opportunity Gap: ${escapeHtml(project.opportunityGap)}</span>
+            <span class="badge ${reviewStatusClass(reviewStatus)}">${escapeHtml(reviewStatus)}</span>
+          </div>
+          <div class="activity-stats">
+            <div><span>Appeared in searches</span><strong>${escapeHtml(activity.searchAppearances || 0)}</strong></div>
+            <div><span>Profile views</span><strong>${escapeHtml(activity.profileViews || 0)}</strong></div>
+            <div><span>Latest viewer</span><strong>${escapeHtml(latestViewerLabel(activity))}</strong></div>
+          </div>
+          <div class="action-row">
+            <a class="btn" href="../funder/index.html#discovery">View in Funder Dashboard</a>
+            <button class="btn primary packet-btn" data-project-id="${escapeHtml(project.id)}">Open Evaluation Packet</button>
+          </div>
+        </article>`;
+      })
+      .join("")}
+  </div>`;
+}
+
+function builderNotifications(projectList) {
+  return projectList.flatMap((project) => {
+    const activity = getBuilderActivity(project);
+    const intel = getIntel(project.id);
+    const topFunder = intel.potentialFunders?.[0];
+    const notifications = [];
+
+    if (topFunder) {
+      notifications.push({
+        label: "Funder recommendation",
+        title: `${topFunder.name} appeared as a potentially relevant funder`,
+        text: `${topFunder.reason} This is a relevance signal from available OECD funding records, not a funding decision.`,
+        date: activity.submittedAt,
+      });
+    } else {
+      notifications.push({
+        label: "Coverage note",
+        title: `Limited funder patterns found for ${project.title}`,
+        text: "No strong funder patterns were found in the available records. This may reflect dataset coverage, not lack of project value.",
+        date: activity.submittedAt,
+      });
+    }
+
+    if (activity.searchAppearances) {
+      notifications.push({
+        label: "Search visibility",
+        title: `${project.title} appeared in ${activity.searchAppearances} funder search${activity.searchAppearances === 1 ? "" : "es"}`,
+        text: "Search appearances are counted when the self-reported profile appears in the Funder Discovery dashboard during this demo session.",
+        date: activity.lastSearchAt || activity.submittedAt,
+      });
+    }
+
+    if (activity.profileViews) {
+      const latest = activity.viewers?.[0];
+      notifications.push({
+        label: "Profile view",
+        title: latest ? `${latest.role} at ${latest.organization} viewed your profile` : `${project.title} received a profile view`,
+        text: "Profile views are demo visibility signals generated when a funder opens the Evaluation Packet in this browser.",
+        date: activity.lastViewedAt || activity.submittedAt,
+      });
+    }
+
+    const reviewStatus = getReviewStatus(project);
+    if (reviewStatus !== "Not reviewed") {
+      notifications.push({
+        label: "Review status",
+        title: `${project.title} is now marked: ${reviewStatus}`,
+        text: "This status reflects funder actions taken inside the current Opportunity Atlas demo workflow.",
+        date: activity.lastViewedAt || activity.submittedAt,
+      });
+    }
+
+    return notifications;
+  });
+}
+
+function renderBuilderNotifications(projectList) {
+  const notifications = builderNotifications(projectList).slice(0, 8);
+  if (!projectList.length) {
+    return `<div class="empty">Notifications will appear after you submit a project.</div>`;
+  }
+  if (!notifications.length) {
+    return `<div class="empty">No notifications yet.</div>`;
+  }
+
+  return `<div class="notification-list">
+    ${notifications
+      .map(
+        (item) => `<article class="notification-item">
+          <div class="notification-dot" aria-hidden="true"></div>
+          <div>
+            <div class="notification-topline">
+              <span class="badge blue">${escapeHtml(item.label)}</span>
+              <span class="meta">${escapeHtml(formatDate(item.date))}</span>
+            </div>
+            <h3>${escapeHtml(item.title)}</h3>
+            <p>${escapeHtml(item.text)}</p>
+          </div>
+        </article>`,
+      )
+      .join("")}
+  </div>`;
+}
+
+function renderBuilderDashboard() {
+  const submitted = builderProjects();
+  const activities = submitted.map((project) => getBuilderActivity(project));
+  const searchTotal = activities.reduce((sum, activity) => sum + Number(activity.searchAppearances || 0), 0);
+  const viewTotal = activities.reduce((sum, activity) => sum + Number(activity.profileViews || 0), 0);
+  const funderSignalTotal = submitted.filter((project) => getIntel(project.id).potentialFunders?.length).length;
+
+  return `<section class="builder-dashboard">
+    <section class="grid four">
+      ${kpi("Submitted Profiles", submitted.length)}
+      ${kpi("Appeared in Searches", searchTotal)}
+      ${kpi("Profile Views", viewTotal)}
+      ${kpi("Funder Signals", funderSignalTotal)}
+    </section>
+  </section>`;
+}
+
+function renderBuilderHistoryPage() {
+  const target = $("#builder-history");
+  if (!target) return;
+  const submitted = builderProjects();
+  target.innerHTML = `
+    ${pageHeader(
+      "builder-history-title",
+      "Submission History",
+      "Review the self-reported opportunity profiles you have submitted.",
+      "",
+      "",
+      "Builder Portal",
+    )}
+    ${renderBuilderDashboard()}
+    <section class="section card">
+      ${sectionHeader("Submitted Projects", "These profiles are visible to funders in the Discovery workflow.")}
+      ${renderBuilderHistory(submitted)}
+    </section>
+  `;
+}
+
+function renderBuilderNotificationsPage() {
+  const target = $("#builder-notifications");
+  if (!target) return;
+  const submitted = builderProjects();
+  target.innerHTML = `
+    ${pageHeader(
+      "builder-notifications-title",
+      "Notifications",
+      "Track funder relevance, search visibility, and profile-view signals.",
+      "",
+      "",
+      "Builder Portal",
+    )}
+    ${renderBuilderDashboard()}
+    <section class="section card">
+      ${sectionHeader("Funder Signals", "Demo notifications inspired by professional profile and pipeline workflows.")}
+      ${renderBuilderNotifications(submitted)}
+      <div class="section note-panel">
+        <strong>Demo visibility signals:</strong> These notifications come from local browser activity in this prototype. They are not verified outreach, funding offers, or real-time analytics.
+      </div>
+    </section>
+  `;
 }
 
 function renderSimilarTable(records) {
@@ -804,7 +1172,8 @@ function renderDetail() {
        <span class="badge ${reviewStatusClass(reviewStatus)}">Current Review Status: ${escapeHtml(reviewStatus)}</span>
        <button class="btn review-action" data-action="shortlist">Shortlist</button>
        <button class="btn review-action" data-action="evidence">Request Evidence</button>
-       <button class="btn primary review-action" data-action="invite">Invite to Apply</button>`,
+       <button class="btn review-action" data-action="invite">Invite to Apply</button>
+       <button class="btn primary review-action" data-action="funded">Record Funding</button>`,
     )}
     ${state.reviewMessage ? `<div class="toast">${escapeHtml(state.reviewMessage)}</div>` : ""}
     <section class="packet-strip">
@@ -978,7 +1347,9 @@ function renderSubmit() {
               </div>
               <div class="section note-panel">Your project has been converted into a self-reported opportunity profile and added to the Funder Discovery Dashboard.</div>
               <div class="section badge-row">
-                <button class="btn primary packet-btn" data-project-id="${escapeHtml(profile.id)}">View</button>
+                <a class="btn" href="../funder/index.html#discovery">View in Funder Dashboard</a>
+                <button class="btn route-btn" data-page="builder-history" type="button">View History</button>
+                <button class="btn primary packet-btn" data-project-id="${escapeHtml(profile.id)}">View Evaluation Packet</button>
               </div>`
             : `<div class="empty">Submit a project to generate a structured funder-readable preview.</div>`
         }
@@ -1037,14 +1408,20 @@ function renderCurrentPage() {
   renderDiscovery();
   renderDetail();
   renderQueue();
+  renderFunderHistory();
   renderSignals();
   renderSubmit();
+  renderBuilderHistoryPage();
+  renderBuilderNotificationsPage();
   document.querySelectorAll(".page").forEach((page) => page.classList.toggle("active", page.id === state.page));
   document.querySelectorAll(".nav-link").forEach((link) => link.classList.toggle("active", link.dataset.page === state.page));
 }
 
 function goTo(page) {
   state.page = page;
+  if (page === "discovery") {
+    recordBuilderSearchAppearances(projects.filter(matchesFilter), "Discover Projects");
+  }
   renderCurrentPage();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -1053,6 +1430,7 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("#reset-demo-data")) {
     localStorage.removeItem(STORAGE_KEYS.submittedProjects);
     localStorage.removeItem(STORAGE_KEYS.reviewStatuses);
+    localStorage.removeItem(STORAGE_KEYS.builderActivity);
     window.location.reload();
     return;
   }
@@ -1082,6 +1460,10 @@ document.addEventListener("click", (event) => {
   const packet = event.target.closest(".packet-btn");
   if (packet) {
     state.selectedProjectId = packet.dataset.projectId;
+    const project = getProject(state.selectedProjectId);
+    if (["overview", "discovery", "queue", "funder-history"].includes(state.page)) {
+      recordBuilderProfileView(project, "Evaluation Packet");
+    }
     state.reviewMessage = "";
     goTo("detail");
     return;
@@ -1094,6 +1476,7 @@ document.addEventListener("click", (event) => {
       shortlist: ["Shortlisted", "Project added to shortlist."],
       evidence: ["Evidence requested", "Evidence request marked."],
       invite: ["Invited to apply", "Project marked as invited to apply."],
+      funded: ["Funded", "Funding recorded in funder history."],
     };
     const [status, message] = messages[reviewAction.dataset.action] || messages.shortlist;
     project.reviewStatus = status;
@@ -1107,6 +1490,9 @@ document.addEventListener("change", (event) => {
   const filter = event.target.closest("[data-filter]");
   if (!filter) return;
   state.filters[filter.dataset.filter] = filter.value;
+  if (state.page === "discovery") {
+    recordBuilderSearchAppearances(projects.filter(matchesFilter), "Discovery filter");
+  }
   renderDiscovery();
 });
 
@@ -1136,6 +1522,7 @@ document.addEventListener("submit", (event) => {
     tractionEvidence: form.get("tractionEvidence") || "",
     impactMeasurement: form.get("impactMeasurement") || "",
     reviewStatus: "Not reviewed",
+    submittedAt: new Date().toISOString(),
     isSubmitted: true,
   };
   newProject.readiness = computeReadiness(newProject);
@@ -1147,9 +1534,13 @@ document.addEventListener("submit", (event) => {
   state.builderProfile = newProject;
   state.selectedProjectId = newProject.id;
   state.reviewMessage = "";
+  initializeBuilderActivity(newProject);
   saveSubmittedProjects();
   renderSubmit();
 });
 
 initializeStoredData();
+if (state.page === "discovery") {
+  recordBuilderSearchAppearances(projects.filter(matchesFilter), "Discover Projects");
+}
 renderCurrentPage();

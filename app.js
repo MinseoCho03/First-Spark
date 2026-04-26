@@ -529,7 +529,7 @@ function projectCard(project, featured = false) {
     </div>
     <div class="card-footer">
       <span class="money">${featured ? "Featured gap" : "Evaluation packet"}</span>
-      <button class="btn primary packet-btn" data-project-id="${escapeHtml(project.id)}">${featured ? "View Evaluation Packet" : "View Evaluation Packet"}</button>
+      <button class="btn primary packet-btn" data-project-id="${escapeHtml(project.id)}">${featured ? "View" : "View"}</button>
     </div>
   </article>`;
 }
@@ -558,20 +558,6 @@ function renderOverview() {
       "Discover overlooked young builders through their projects.",
       "Opportunity Atlas turns self-reported local projects into structured, funder-readable opportunity profiles, helping opportunity providers discover young builders beyond traditional credentials and networks.",
     )}
-    <section class="portal-cards">
-      <article class="card portal-card primary">
-        <span>For Funders</span>
-        <h2>Discover overlooked young builders</h2>
-        <p>Browse self-reported local projects, review structured evaluation packets, compare readiness, and identify opportunity gaps.</p>
-        <button class="btn primary route-btn" data-page="discovery">Enter Funder Dashboard</button>
-      </article>
-      <article class="card portal-card">
-        <span>For Builders</span>
-        <h2>Submit your project</h2>
-        <p>Turn your informal project into a structured opportunity profile that funders can review.</p>
-        <button class="btn route-btn" data-page="submit">Submit a Project</button>
-      </article>
-    </section>
     ${funderWorkflow("discover")}
     <section class="grid four">
       ${kpi("Submitted Projects", projects.length)}
@@ -663,7 +649,7 @@ function queueProjectCard(project) {
       <span class="badge green">Verification: ${escapeHtml(project.verification)}</span>
       <span class="badge ${reviewStatusClass(status)}">${escapeHtml(status)}</span>
     </div>
-    <button class="btn primary packet-btn" data-project-id="${escapeHtml(project.id)}">Open Evaluation Packet</button>
+    <button class="btn primary packet-btn" data-project-id="${escapeHtml(project.id)}">View</button>
   </article>`;
 }
 
@@ -689,7 +675,6 @@ function renderQueue() {
       ${renderQueueGroup("Shortlisted", "Shortlisted")}
       ${renderQueueGroup("Evidence Requested", "Evidence requested")}
       ${renderQueueGroup("Invited to Apply", "Invited to apply")}
-      ${renderQueueGroup("Not Reviewed", "Not reviewed")}
     </section>
   `;
 }
@@ -897,8 +882,7 @@ function renderDetail() {
       ${sectionHeader("Funding Context", "Historical philanthropy records that may indicate funder relevance.")}
       <p class="lead">OECD philanthropy data is used as a funding intelligence layer. It helps identify which funders may care about this project area based on historical funding behavior.</p>
       ${renderSimilarTable(intel.similarProjects || [])}
-      <div class="section note-panel"><strong>Similar funded projects indicate funder relevance, not proof of project quality.</strong></div>
-      <div class="section note-panel"><strong>${escapeHtml(intel.coverageNote)}</strong></div>
+      <div class="section note-panel"><strong>Similar funded projects indicate funder relevance, not proof of project quality.</strong> ${escapeHtml(intel.coverageNote)}</div>
       <div class="split-list">
         <div>
           <h3>Relevant funding patterns</h3>
@@ -998,8 +982,7 @@ function renderSubmit() {
               </div>
               <div class="section note-panel">Your project has been converted into a self-reported opportunity profile and added to the Funder Discovery Dashboard.</div>
               <div class="section badge-row">
-                <button class="btn route-btn" data-page="discovery" data-reset-filters="true">View in Funder Dashboard</button>
-                <button class="btn primary packet-btn" data-project-id="${escapeHtml(profile.id)}">View Evaluation Packet</button>
+                <button class="btn primary packet-btn" data-project-id="${escapeHtml(profile.id)}">View</button>
               </div>`
             : `<div class="empty">Submit a project to generate a structured funder-readable preview.</div>`
         }
